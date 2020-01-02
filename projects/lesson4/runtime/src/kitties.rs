@@ -26,53 +26,62 @@ decl_storage! {
 	}
 }
 
+// decl_module! {
+// 	pub struct Module<T: Trait> for enum Call where origin: T::Origin {
+// 		/// Create a new kitty
+// 		pub fn create(origin) {
+// 			// check sender
+// 			let sender = ensure_signed(origin)?;
+			
+// 			// 作业：重构create方法，避免重复代码
+// 			Self::do_create(sender)?;
+			
+// 		}
+
+// 		/// Breed kitties
+// 		pub fn breed(origin, kitty_id_1: T::KittyIndex, kitty_id_2: T::KittyIndex) {
+// 			let sender = ensure_signed(origin)?;
+
+// 			Self::do_breed(sender, kitty_id_1, kitty_id_2)?;
+// 		}
+
+// 		// add transfer function
+// 		fn transfer(origin, kitty_id: T::KittyIndex, to: T::AccountId) -> dispatch::Result {
+// 			// ensure sender
+// 			let sender = ensure_signed(origin)?;
+
+// 			// check
+// 			ensure!(sender != to, "receiver must not be yourself.");
+// 			// ensure!(<OwnedKitties<T>>::exists((sender.clone(), kitty_id), "Do not have the kitty."));
+
+// 			// do transfer
+// 			Self::do_transfer(sender, kitty_id, to)?;
+
+
+// 		}
+
+// 	}
+// }
+
 decl_module! {
 	pub struct Module<T: Trait> for enum Call where origin: T::Origin {
 		/// Create a new kitty
-		pub fn create(origin) -> Result {
-			// check sender
+		pub fn create(origin) {
 			let sender = ensure_signed(origin)?;
-			
-			// 作业：重构create方法，避免重复代码
-
-			let kitty_id = Self::next_kitty_id()?;
-
-			if kitty_id == T::KittyIndex::max_value() {
-				return Err("Kitties count overflow");
-			}
-
-			// generate kitty's dna
-			let dna_kitty = Self::random_value(&sender);
-			
-			// do insert
-			let kitty = Kitty(dna_kitty);
-			Self::insert_kitty(sender, kitty_id, kitty);
-
-            Ok(())
+			Self::do_create(sender)?;
 		}
 
 		/// Breed kitties
 		pub fn breed(origin, kitty_id_1: T::KittyIndex, kitty_id_2: T::KittyIndex) {
 			let sender = ensure_signed(origin)?;
-
 			Self::do_breed(sender, kitty_id_1, kitty_id_2)?;
 		}
 
-		// add transfer function
-		fn transfer(origin, kitty_id: T::KittyIndex, to: T::AccountId) -> Result {
-			// ensure sender
+        /// Transfer kitty
+		pub fn transfer(origin, kitty_id: T::KittyIndex, receiver: T::AccountId) {
 			let sender = ensure_signed(origin)?;
-
-			// check
-			ensure!(sender != to, "receiver must not be yourself.");
-			ensure!(<OwnedKitties<T>>::exists((sender.clone(), kitty_id), "Do not have the kitty."));
-
-			// do transfer
-			Self::do_transfer(sender, kitty_id, to);
-
-
+			Self::do_transfer(sender, kitty_id, receiver)?;
 		}
-
 	}
 }
 
@@ -86,15 +95,36 @@ fn combine_dna(dna1: u8, dna2: u8, selector: u8) -> u8 {
 	let mut res = 0u8;
 	for index in 0..8 {
 		if selector % (1 << index) == 0 {
-			res != dna1 & (1 << index);
+			res &= dna1 & (1 << index);
 		} else {
-			res != dna2 & (1 << index);
+			res &= dna2 & (1 << index);
 		}
 	}
 	return res;
 }
 
 impl<T: Trait> Module<T> {
+
+	fn do_create(sender: T::AccountId) -> dispatch::Result {
+		let kitty_id = Self::next_kitty_id()?;
+
+		if kitty_id == T::KittyIndex::max_value() {
+			return Err("Kitties count overflow");
+		}
+
+		// generate kitty's dna
+		let dna_kitty = Self::random_value(&sender);
+		
+		// do insert
+		let kitty = Kitty(dna_kitty);
+		Self::insert_kitty(sender, kitty_id, kitty);
+
+		Ok(())
+	}
+
+
+
+
 	fn random_value(sender: &T::AccountId) -> [u8; 16] {
 		let payload = (
 			<randomness_collective_flip::Module<T> as Randomness<T::Hash>>::random_seed(),
@@ -154,28 +184,28 @@ impl<T: Trait> Module<T> {
 
 	
 	fn do_transfer(from: T::AccountId, kitty_id: T::KittyIndex, to: T::AccountId) -> dispatch::Result {
-		let from_count = Self::owned_kitties_count(from_account.clone());
-		let to_account = Self::owned_kitties_count(to.clone());
-		if from_account == T::KittyIndex::min_value() {
+		let from_count = Self::owned_kitties_count(from.clone());
+		let to_count = Self::owned_kitties_count(to.clone());
+		if from_count == T::KittyIndex::min_value() {
 			return Err("underflow when sub a kitty from from_account");
 		}
 		
-		from_account = from_count-1.into();
-		if to_account == T::KittyIndex::max_value() {
+		let from_addr_count = from_count-1.into();
+		if to_count == T::KittyIndex::max_value() {
 			return Err("Overflow when add a kitty to to_account.");
 		}
 
-		to_account = to_owner_count + 1.into();
+		let to_addr_count = to_count+1.into();
 		let kitty_id = Self::owned_kitties((from.clone(), kitty_id));
-		let last_from_kitty_id = Self::owned_kitties((from.clone(), from_account));
-		<OwnedKitties<T>>::remove((from.clone(), from_account));
+		let last_from_kitty_id = Self::owned_kitties((from.clone(), from_addr_count));
+		<OwnedKitties<T>>::remove((from.clone(), from_addr_count));
 
-		if (kitty_id != from_owner_count.into()) {
+		if kitty_id != from_addr_count.into() {
 			<OwnedKitties<T>>::insert((from.clone(), kitty_id), last_from_kitty_id);
 		}
-		<OwnedKittiesCount<T>>::insert(from.clone(), from_account);
-		<OwnedKittiesCount<T>>::insert(to.clone(), to_account);
-		<OwnedKitties<T>>::insert((to, to_account), kitty_id);
+		<OwnedKittiesCount<T>>::insert(from.clone(), from_addr_count);
+		<OwnedKittiesCount<T>>::insert(to.clone(), to_addr_count);
+		<OwnedKitties<T>>::insert((to, to_addr_count), kitty_id);
 		Ok(())
 	}
 	
